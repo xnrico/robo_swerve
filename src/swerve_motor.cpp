@@ -9,7 +9,6 @@
 #include <units/time.h>
 #include <units/voltage.h>
 
-#include <ctre/phoenix6/CANBus.hpp>
 #include <ctre/phoenix6/signals/SpnEnums.hpp>
 
 namespace robo {
@@ -25,8 +24,8 @@ swerve_talon::swerve_talon()
     : swerve_motor(),
       motor(std::make_shared<hardware::TalonFX>(this->motor_id)),
       configurator(motor->GetConfigurator()),
-      angle_voltage(units::angle::turn_t(0.0)),
-      velocity_voltage(units::angular_velocity::turns_per_second_t(0.0)),
+      angle_voltage(units::angle::turn_t{0.0}),
+      velocity_voltage(units::angular_velocity::turns_per_second_t{0.0}),
       is_drive_motor(true),
       is_factory_reset(false) {
   this->factory_reset();
@@ -37,8 +36,8 @@ swerve_talon::swerve_talon(const std::string& name_)
     : swerve_motor(name_),
       motor(std::make_shared<hardware::TalonFX>(this->motor_id)),
       configurator(motor->GetConfigurator()),
-      angle_voltage(units::angle::turn_t(0.0)),
-      velocity_voltage(units::angular_velocity::turns_per_second_t(0.0)),
+      angle_voltage(units::angle::turn_t{0.0}),
+      velocity_voltage(units::angular_velocity::turns_per_second_t{0.0}),
       is_drive_motor(true),
       is_factory_reset(false) {
   this->factory_reset();
@@ -49,8 +48,8 @@ swerve_talon::swerve_talon(const std::string& name_, bool is_drive_motor_)
     : swerve_motor(name_),
       motor(std::make_shared<hardware::TalonFX>(this->motor_id)),
       configurator(motor->GetConfigurator()),
-      angle_voltage(units::angle::turn_t(0.0)),
-      velocity_voltage(units::angular_velocity::turns_per_second_t(0.0)),
+      angle_voltage(units::angle::turn_t{0.0}),
+      velocity_voltage(units::angular_velocity::turns_per_second_t{0.0}),
       is_drive_motor(is_drive_motor_),
       is_factory_reset(false) {
   this->factory_reset();
@@ -61,8 +60,8 @@ swerve_talon::swerve_talon(const std::string& name_, std::shared_ptr<hardware::T
     : swerve_motor(name_),
       motor(std::move(motor_)),
       configurator(motor->GetConfigurator()),
-      angle_voltage(units::angle::turn_t(0.0)),
-      velocity_voltage(units::angular_velocity::turns_per_second_t(0.0)),
+      angle_voltage(units::angle::turn_t{0.0}),
+      velocity_voltage(units::angular_velocity::turns_per_second_t{0.0}),
       is_drive_motor(is_drive_motor_),
       is_factory_reset(false) {
   this->factory_reset();
@@ -84,18 +83,27 @@ auto swerve_talon::clear_faults() -> void {
   if (motor) motor->ClearStickyFaults();
 }
 
+// Degrees factor: 360 / (angle_gear_ratio * 1 rotation of encoder)
+// Meters factor: (PI * wheel_diameter_in_meters) / (drive_gear_ratio * 1 rotation of encoder)
 auto swerve_talon::configure_encoder(double pos_conversion_factor) -> void {
   configurator.Refresh(this->config);
-  pos_conversion_factor = 1.0 / pos_conversion_factor;  // Invert conversion factor for TalonFX
-  if (!is_drive_motor) pos_conversion_factor *= 360.0;  // Convert to degrees for angle motors
-  this->conversion_factor = pos_conversion_factor;
+
+  // set the conversion factor to ticks / (degrees or meters)
+  pos_conversion_factor =
+      1.0 / pos_conversion_factor;  // (drive_gear_ratio * 1 rotation of encoder) / (wheel circumference)
+  if (!is_drive_motor) pos_conversion_factor *= 360.0;  // angle_gear_ratio * 1 rotation of encoder
+
+  this->conversion_factor = pos_conversion_factor;  // in rotations per degree or 1 rotation of encoder per meter
 
   config.MotionMagic =
       config.MotionMagic
-          .WithMotionMagicCruiseVelocity(units::angular_velocity::turns_per_second_t{100.0} / pos_conversion_factor)
+          .WithMotionMagicCruiseVelocity(units::angular_velocity::turns_per_second_t{100.0} /
+                                         pos_conversion_factor)  // Max 6000 RPM
           .WithMotionMagicAcceleration(
-              (units::angular_acceleration::turns_per_second_squared_t{100.0} / pos_conversion_factor) / 0.100)
-          .WithMotionMagicExpo_kV(ctre::unit::volts_per_turn_per_second_t{0.12} * pos_conversion_factor)
+              (units::angular_acceleration::turns_per_second_squared_t{100.0} / pos_conversion_factor) /
+              0.100)  // Max 1000 RPM /s
+          .WithMotionMagicExpo_kV(ctre::unit::volts_per_turn_per_second_t{0.12} *
+                                  pos_conversion_factor)  // Default 0.12 V/(rps)
           .WithMotionMagicExpo_kA(ctre::unit::volts_per_turn_per_second_squared_t{0.1});
 
   config.Feedback.WithFeedbackSensorSource(ctre::phoenix6::signals::FeedbackSensorSourceValue::RotorSensor)
@@ -151,17 +159,16 @@ auto swerve_talon::set_output(double percentage) -> void {  // this API is for n
   if (motor) motor->SetControl(controls::DutyCycleOut{percentage});
 }
 
+// setpoint in meters per second for drive motors, degrees for angle motors
 auto swerve_talon::set_reference(double setpoint, double kV) -> void {
-  this->set_reference(setpoint, kV, this->get_position());
-}
-
-auto swerve_talon::set_reference(double setpoint, double kV, double position) -> void {
   if (motor) {
     if (is_drive_motor) {
+      setpoint *= conversion_factor;  // Convert setpoint to the correct units (rotations per second)
       motor->SetControl(velocity_voltage.WithVelocity(units::angular_velocity::turns_per_second_t{setpoint})
                             .WithFeedForward(units::voltage::volt_t{kV}));
     } else {
-      motor->SetControl(angle_voltage.WithPosition(units::angle::turn_t{setpoint / 360.0}));
+      setpoint /= 360.0;  // Convert setpoint to turns (1 rotation = 360 degrees)
+      motor->SetControl(angle_voltage.WithPosition(units::angle::turn_t{setpoint}));
     }
   }
 }
@@ -196,10 +203,10 @@ auto swerve_talon::set_current_limit(int max_amps) -> void {
   configurator.Apply(this->config.CurrentLimits);
 }
 
+// Ramp rate in seconds for voltage to ramp from 0 to full voltage
 auto swerve_talon::set_ramp_rate(double ramp_rate) -> void {
   configurator.Refresh(this->config.ClosedLoopRamps);
-  config.ClosedLoopRamps = config.ClosedLoopRamps.WithVoltageClosedLoopRampPeriod(
-      units::time::second_t{ramp_rate});  // Convert seconds to hertz for TalonFX
+  config.ClosedLoopRamps = config.ClosedLoopRamps.WithVoltageClosedLoopRampPeriod(units::time::second_t{ramp_rate});
   configurator.Apply(this->config.ClosedLoopRamps);
 }
 

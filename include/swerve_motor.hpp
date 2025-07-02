@@ -37,7 +37,6 @@ class swerve_motor {
   virtual auto get_output() -> double = 0;
   virtual auto set_output(double percentage) -> void = 0;
   virtual auto set_reference(double setpoint, double kV) -> void = 0;  // Feedforward kV in volt-meter/s
-  virtual auto set_reference(double setpoint, double kV, double position) -> void = 0;
   virtual auto get_voltage() -> double = 0;
   virtual auto set_voltage(double voltage) -> void = 0;
   virtual auto get_velocity() -> double = 0;
@@ -81,7 +80,6 @@ class swerve_talon : public swerve_motor {
   auto get_output() -> double override = 0;
   auto set_output(double percentage) -> void override;
   auto set_reference(double setpoint, double kV) -> void override;
-  auto set_reference(double setpoint, double kV, double position) -> void override;
   auto get_voltage() -> double override;
   auto set_voltage(double voltage) -> void override;
   auto get_velocity() -> double override;
